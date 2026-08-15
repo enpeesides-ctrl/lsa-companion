@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LSA Companion</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --surface: #17171a;
+    --surface-2: #1f1f23;
+    --border: #2a2a2f;
+    --text: #f2f2f4;
+    --text-muted: #8b8b93;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.15);
+    --danger: #ff453a;
+    --warn: #ff9f0a;
+    --success: #30d158;
+    --radius: 16px;
+  }
+  /* "Chrome" light theme — brushed aluminum feel, not stark white */
+  html[data-theme="light"] {
+    --bg: #e8e9ec;
+    --surface: #f7f7f9;
+    --surface-2: #eceef1;
+    --border: #d4d6db;
+    --text: #1c1c1e;
+    --text-muted: #6e6e76;
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.1);
+    --danger: #d70015;
+    --warn: #b25000;
+    --success: #248a3d;
+  }
+  * { box-sizing: border-box; }
+  html { transition: background 0.2s ease; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    height: 100vh;
+    overflow: hidden;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+  .theme-toggle {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--text);
+  }
+
+  /* ---------- Login ---------- */
+  #login {
+    max-width: 340px; margin: 15vh auto; padding: 32px 28px;
+    background: var(--surface); border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  #login h2 { margin: 0 0 24px; font-size: 22px; font-weight: 700; }
+  #login input {
+    display: block; width: 100%; padding: 12px 14px; margin-bottom: 12px;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-size: 15px;
+  }
+  #login button {
+    width: 100%; padding: 12px; border: none; border-radius: 10px;
+    background: var(--accent); color: white; font-size: 15px; font-weight: 600;
+    cursor: pointer; margin-top: 4px;
+  }
+  #login-error { color: var(--danger); font-size: 13px; margin-top: 10px; }
+
+  /* ---------- App shell ---------- */
+  #app { display: none; height: 100vh; }
+  .shell {
+    display: flex; height: 100vh;
+  }
+  .list-panel {
+    width: 100%; max-width: 420px; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  .detail-panel {
+    flex: 1; display: flex; flex-direction: column; height: 100vh;
+    background: var(--bg);
+  }
+  @media (max-width: 760px) {
+    .list-panel { max-width: none; border-right: none; }
+    .shell.showing-detail .list-panel { display: none; }
+    .shell:not(.showing-detail) .detail-panel { display: none; }
+  }
+
+  /* ---------- Top bar / telemetry strip ---------- */
+  .topbar {
+    padding: 16px 16px 10px; border-bottom: 1px solid var(--border);
+    padding-top: max(16px, env(safe-area-inset-top));
+  }
+  .topbar-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .topbar h1 { font-size: 19px; font-weight: 700; margin: 0; }
+  .telemetry { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .telemetry-chip {
+    flex-shrink: 0; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 8px 12px; cursor: pointer;
+  }
+  .telemetry-chip .num { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .telemetry-chip .lbl { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .telemetry-chip.danger .num { color: var(--danger); }
+  .telemetry-chip.warn .num { color: var(--warn); }
+
+  /* ---------- Filter chips ---------- */
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .chip {
+    flex-shrink: 0; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted); font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .chip.active { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
+  .chip .n { opacity: 0.7; font-variant-numeric: tabular-nums; }
+
+  .search-row { padding: 10px 16px; }
+  .search-row input {
+    width: 100%; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text); font-size: 14px;
+  }
+
+  /* ---------- Chat list ---------- */
+  .chat-list { flex: 1; overflow-y: auto; }
+  .chat-item {
+    display: flex; gap: 12px; padding: 12px 16px; cursor: pointer;
+    border-bottom: 1px solid var(--border); align-items: center;
+  }
+  .chat-item:active { background: var(--surface); }
+  .chat-item.selected { background: var(--surface); }
+  .avatar {
+    width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 16px; color: white;
+  }
+  .avatar.call { background: linear-gradient(135deg, #0a84ff, #5e5ce6); }
+  .avatar.message { background: linear-gradient(135deg, #30d158, #0a9f4a); }
+  .chat-item-body { flex: 1; min-width: 0; }
+  .chat-item-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .chat-item-name { font-size: 15px; font-weight: 600; }
+  .chat-item.unread .chat-item-name { font-weight: 700; }
+  .chat-item-time { font-size: 12px; color: var(--text-muted); flex-shrink: 0; margin-left: 8px; }
+  .chat-item-preview {
+    font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; margin-top: 2px;
+  }
+  .chat-item.unread .chat-item-preview { color: var(--text); }
+  .chat-item-badges { display: flex; gap: 4px; margin-top: 4px; }
+  .badge { font-size: 10px; padding: 2px 6px; border-radius: 6px; font-weight: 600; }
+  .badge.missed { background: rgba(255, 159, 10, 0.15); color: var(--warn); }
+  .badge.flagged { background: rgba(255, 69, 58, 0.15); color: var(--danger); }
+  .unread-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .empty-state { padding: 60px 20px; text-align: center; color: var(--text-muted); font-size: 14px; }
+
+  /* ---------- Detail view ---------- */
+  .detail-header {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); padding-top: max(12px, env(safe-area-inset-top));
+  }
+  .back-btn {
+    display: none; background: none; border: none; color: var(--accent);
+    font-size: 22px; cursor: pointer; padding: 0 4px;
+  }
+  @media (max-width: 760px) { .back-btn { display: block; } }
+  .detail-header-info { flex: 1; }
+  .detail-header-name { font-weight: 700; font-size: 15px; }
+  .detail-header-sub { font-size: 12px; color: var(--text-muted); }
+
+  .banner { margin: 12px 16px 0; padding: 10px 14px; border-radius: 10px; font-size: 13px; }
+  .banner.info { background: var(--accent-soft); color: var(--accent); }
+  .banner.warn { background: rgba(255, 159, 10, 0.12); color: var(--warn); }
+
+  .thread { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .bubble-row { display: flex; }
+  .bubble-row.them { justify-content: flex-start; }
+  .bubble-row.us { justify-content: flex-end; }
+  .bubble {
+    max-width: 75%; padding: 10px 14px; border-radius: 18px; font-size: 14px; line-height: 1.4;
+    white-space: pre-wrap;
+  }
+  .bubble-row.them .bubble { background: var(--surface); border-bottom-left-radius: 4px; }
+  .bubble-row.us .bubble { background: var(--accent); color: white; border-bottom-right-radius: 4px; }
+  .bubble-time { font-size: 10px; color: var(--text-muted); margin-top: 2px; padding: 0 4px; }
+  .call-event { align-self: center; font-size: 12px; color: var(--text-muted); background: var(--surface); padding: 6px 12px; border-radius: 10px; }
+
+  .compose-bar {
+    display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border);
+    align-items: flex-end;
+  }
+  .compose-bar textarea {
+    flex: 1; resize: none; max-height: 100px; padding: 10px 14px; border-radius: 18px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-size: 14px; font-family: inherit;
+  }
+  .compose-send {
+    width: 38px; height: 38px; border-radius: 50%; border: none; background: var(--accent);
+    color: white; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .compose-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .compose-status { font-size: 12px; color: var(--text-muted); padding: 0 16px 8px; }
+  .compose-status.error { color: var(--danger); }
+
+  .detail-fields { padding: 12px 16px; border-top: 1px solid var(--border); }
+  .field { margin-bottom: 10px; }
+  .field-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
+  .field-value { font-size: 14px; }
+  .field input[type=text] {
+    width: 100%; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px; margin-top: 2px;
+  }
+
+  .actions {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border);
+  }
+  .action-btn {
+    flex: 1; min-width: 120px; padding: 10px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .action-btn:active { background: var(--surface-2); }
+  .action-btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .action-btn.disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .no-selection {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 14px;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h2>LSA Companion</h2>
+  <input id="email" type="email" placeholder="Email">
+  <input id="password" type="password" placeholder="Password">
+  <button onclick="login()">Sign in</button>
+  <p id="login-error"></p>
+</div>
+
+<div id="app">
+  <div class="shell" id="shell">
+    <div class="list-panel">
+      <div class="topbar">
+        <div class="topbar-row">
+          <h1 id="business-name"></h1>
+          <button class="theme-toggle" onclick="toggleTheme()" id="theme-toggle-btn"></button>
+        </div>
+        <div class="telemetry" id="telemetry"></div>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="search-row">
+        <input id="search" type="text" placeholder="Search phone or message" oninput="render()">
+      </div>
+      <div class="chat-list" id="chat-list"></div>
+    </div>
+    <div class="detail-panel" id="detail-panel">
+      <div class="no-selection">Select a lead to view details</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://clzzqqwgluazefftvphw.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsenpxcXdnbHVhemVmZnR2cGh3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY3MjM0MTAsImV4cCI6MjEwMjI5OTQxMH0.TT3Gd8mpLCFISGE7iDtlwYQlZ7Jh2J2-5BxefMdwFA8';
+const _db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Minimal thin-stroke line icons (SF Symbols-style), currentColor so
+// they inherit the right color per context — no emoji, no icon font,
+// no extra dependency, matches the existing no-build-step setup.
+const ICONS = {
+  phone: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>',
+  message: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
+  warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+  sun: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+  moon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>',
+  send: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+};
+
+// Edge Function URL — same project ref as SUPABASE_URL above.
+const SEND_REPLY_URL = SUPABASE_URL + '/functions/v1/send-reply';
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('lsa-theme', theme);
+  document.getElementById('theme-toggle-btn').innerHTML = theme === 'light' ? ICONS.moon : ICONS.sun;
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(current);
+}
+
+applyTheme(localStorage.getItem('lsa-theme') || 'dark');
+
+let allLeads = [];
+let business = null;
+let avgCostPerLead = 0;
+let currentTab = 'new';
+let selectedLeadId = null;
+
+const BOOKED_STALE_DAYS = 14;
+
+function daysSince(dateStr) {
+  if (!dateStr) return null;
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+}
+
+const TABS = [
+  { key: 'new', label: 'New', match: l => l.lead_status === 'NEW' && !l.responded && !l.archived },
+  { key: 'in_progress', label: 'In Progress', match: l => l.lead_status === 'ACTIVE' && !l.archived },
+  { key: 'booked', label: 'Booked', match: l => l.lead_status === 'BOOKED' && !l.job_completed_locally && !l.archived },
+  { key: 'completed', label: 'Completed', match: l => l.job_completed_locally && !l.archived },
+  { key: 'declined', label: 'Declined', match: l => (l.lead_status === 'DECLINED' || l.lead_status === 'CONSUMER_DECLINED') && !l.archived },
+  { key: 'expired', label: 'Expired', match: l => l.lead_status === 'EXPIRED' && !l.archived },
+  { key: 'archived', label: 'Archived', match: l => l.archived },
+  { key: 'all', label: 'All', match: l => !l.archived },
+];
+
+async function login() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const { error } = await _db.auth.signInWithPassword({ email, password });
+  if (error) {
+    document.getElementById('login-error').textContent = error.message;
+    return;
+  }
+  await init();
+}
+
+async function init() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+
+  const { data: { user } } = await _db.auth.getUser();
+  const { data: membership } = await _db.from('business_members').select('business_id').eq('user_id', user.id).single();
+  const { data: biz } = await _db.from('businesses').select('*').eq('id', membership.business_id).single();
+  business = biz;
+  document.getElementById('business-name').textContent = biz.name;
+
+  await loadLeads();
+  await loadCostEstimate();
+  render();
+}
+
+async function loadLeads() {
+  const { data } = await _db.from('leads').select('*').eq('business_id', business.id).order('google_created_at', { ascending: false });
+  allLeads = data || [];
+}
+
+async function loadCostEstimate() {
+  const { data: costRows } = await _db.from('daily_cost').select('cost_micros').eq('business_id', business.id);
+  const totalCost = (costRows || []).reduce((s, r) => s + r.cost_micros, 0) / 1000000;
+  const chargedCount = allLeads.filter(l => l.lead_charged).length;
+  avgCostPerLead = chargedCount > 0 ? totalCost / chargedCount : 0;
+}
+
+function isFlagged(l) { return l.lead_charged && l.lead_status === 'DECLINED' && l.credit_state === 'UNSPECIFIED'; }
+function isMissedCall(l) { return l.lead_type === 'PHONE_CALL' && l.call_duration_millis === 0; }
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+
+function formatCategory(categoryId) {
+  if (!categoryId) return '-';
+  return categoryId.replace('xcat:service_area_business_', '').replace(/_/g, ' ');
+}
+
+function avatarIcon(l) { return l.lead_type === 'PHONE_CALL' ? ICONS.phone : ICONS.message; }
+
+function formatTime(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) {
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function findDuplicates(lead) {
+  if (!lead.contact_phone) return [];
+  return allLeads.filter(l => l.id !== lead.id && l.contact_phone === lead.contact_phone);
+}
+
+function setTab(key) { currentTab = key; render(); }
+
+function renderTelemetry() {
+  const flaggedLeads = allLeads.filter(isFlagged);
+  const chips = [
+    { label: 'Needs response', value: allLeads.filter(l => !l.responded && !l.archived).length, cls: '' },
+    { label: 'At risk (est.)', value: '£' + (avgCostPerLead * flaggedLeads.length).toFixed(0), cls: 'danger' },
+    { label: 'Missed calls', value: allLeads.filter(isMissedCall).length, cls: 'warn' },
+  ];
+  document.getElementById('telemetry').innerHTML = chips.map(c =>
+    `<div class="telemetry-chip ${c.cls}"><div class="num">${c.value}</div><div class="lbl">${c.label}</div></div>`
+  ).join('');
+}
+
+function renderChips() {
+  document.getElementById('chips').innerHTML = TABS.map(tab => {
+    const count = allLeads.filter(tab.match).length;
+    return `<button class="chip${tab.key === currentTab ? ' active' : ''}" onclick="setTab('${tab.key}')">${tab.label}<span class="n">${count}</span></button>`;
+  }).join('');
+}
+
+function render() {
+  renderTelemetry();
+  renderChips();
+
+  const activeTab = TABS.find(t => t.key === currentTab);
+  const search = document.getElementById('search').value.toLowerCase();
+
+  const filtered = allLeads.filter(l => {
+    if (!activeTab.match(l)) return false;
+    if (search && !(l.contact_phone || '').toLowerCase().includes(search) && !(l.message_text || '').toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  const list = document.getElementById('chat-list');
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty-state">No leads here</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(l => {
+    const preview = l.message_text ? l.message_text.split('\n---\n').pop() : (l.lead_type === 'PHONE_CALL' ? (isMissedCall(l) ? 'Missed call' : 'Phone call') : 'No message');
+    const badges = [];
+    if (isMissedCall(l)) badges.push('<span class="badge missed">MISSED</span>');
+    if (isFlagged(l)) badges.push('<span class="badge flagged">FLAGGED</span>');
+    return `
+      <div class="chat-item ${!l.responded ? 'unread' : ''} ${l.id === selectedLeadId ? 'selected' : ''}" onclick="openLeadDetail('${l.id}')">
+        <div class="avatar ${l.lead_type === 'PHONE_CALL' ? 'call' : 'message'}">${avatarIcon(l)}</div>
+        <div class="chat-item-body">
+          <div class="chat-item-top">
+            <span class="chat-item-name">${l.contact_phone || 'Unknown'}</span>
+            <span class="chat-item-time">${formatTime(l.google_created_at)}</span>
+          </div>
+          <div class="chat-item-preview">${escapeHtml(preview)}</div>
+          ${badges.length ? '<div class="chat-item-badges">' + badges.join('') + '</div>' : ''}
+        </div>
+        ${!l.responded ? '<div class="unread-dot"></div>' : ''}
+      </div>`;
+  }).join('');
+}
+
+async function toggleResponded(id, current) {
+  await _db.from('leads').update({ responded: !current }).eq('id', id);
+  allLeads.find(l => l.id === id).responded = !current;
+  render();
+  if (selectedLeadId === id) openLeadDetail(id);
+}
+
+async function saveNote(id, value) {
+  await _db.from('leads').update({ notes: value }).eq('id', id);
+}
+
+async function setLocalStatus(id, status) {
+  await _db.from('leads').update({ local_status_override: status }).eq('id', id);
+  allLeads.find(l => l.id === id).local_status_override = status;
+  openLeadDetail(id);
+  render();
+}
+
+async function toggleArchived(id) {
+  const lead = allLeads.find(l => l.id === id);
+  lead.archived = !lead.archived;
+  await _db.from('leads').update({ archived: lead.archived }).eq('id', id);
+  closeDetail();
+  render();
+}
+
+async function toggleJobCompleted(id) {
+  const lead = allLeads.find(l => l.id === id);
+  lead.job_completed_locally = !lead.job_completed_locally;
+  await _db.from('leads').update({ job_completed_locally: lead.job_completed_locally }).eq('id', id);
+  openLeadDetail(id);
+  render();
+}
+
+async function sendReply(leadId) {
+  const input = document.getElementById('compose-input');
+  const btn = document.getElementById('compose-send-btn');
+  const status = document.getElementById('compose-status');
+  const text = input.value.trim();
+  if (!text) return;
+
+  btn.disabled = true;
+  status.textContent = 'Sending...';
+  status.className = 'compose-status';
+
+  try {
+    const { data: { session } } = await _db.auth.getSession();
+    const response = await fetch(SEND_REPLY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token,
+        'apikey': SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ lead_id: leadId, message: text }),
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      status.textContent = 'Failed to send: ' + (result.error || 'unknown error');
+      status.className = 'compose-status error';
+      btn.disabled = false;
+      return;
+    }
+
+    // Optimistic append — the permanent, Google-id-backed row lands on
+    // the next sync (see send-reply Edge Function for why this isn't
+    // written directly here).
+    const thread = document.getElementById('thread');
+    const emptyState = thread.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+    thread.insertAdjacentHTML('beforeend',
+      `<div class="bubble-row us"><div><div class="bubble">${escapeHtml(text)}</div><div class="bubble-time">Just now</div></div></div>`);
+    thread.scrollTop = thread.scrollHeight;
+
+    input.value = '';
+    status.textContent = '';
+    const lead = allLeads.find(l => l.id === leadId);
+    if (lead) lead.responded = true;
+    render();
+  } catch (err) {
+    status.textContent = 'Failed to send: ' + err;
+    status.className = 'compose-status error';
+  }
+  btn.disabled = false;
+}
+
+function closeDetail() {
+  selectedLeadId = null;
+  document.getElementById('shell').classList.remove('showing-detail');
+}
+
+async function openLeadDetail(id) {
+  const lead = allLeads.find(l => l.id === id);
+  if (!lead) return;
+  selectedLeadId = id;
+  document.getElementById('shell').classList.add('showing-detail');
+  render(); // refresh selected-state highlight in the list
+
+  const panel = document.getElementById('detail-panel');
+  panel.innerHTML = '<div class="no-selection">Loading…</div>';
+
+  const { data: messages } = await _db
+    .from('conversation_messages')
+    .select('*')
+    .eq('lead_id', id)
+    .order('event_date_time', { ascending: true });
+
+  const dupes = findDuplicates(lead);
+  const dupeHtml = dupes.length
+    ? `<div class="banner info">${ICONS.warning} Same contact also reached you via: ${dupes.map(d => d.lead_type + ' on ' + formatTime(d.google_created_at)).join(', ')} — check charges.</div>`
+    : '';
+
+  const bookedAge = daysSince(lead.google_created_at);
+  const staleHtml = (lead.lead_status === 'BOOKED' && !lead.job_completed_locally && bookedAge > BOOKED_STALE_DAYS)
+    ? `<div class="banner warn">${ICONS.warning} Booked ${bookedAge} days ago — Google never tells us when a job finishes. Mark it completed below if it's done.</div>`
+    : '';
+
+  let threadHtml = '';
+  if (messages && messages.length) {
+    threadHtml = messages.map(m => {
+      if (m.channel === 'PHONE_CALL') {
+        return `<div class="call-event">${ICONS.phone} Phone call${m.text ? '' : ' (missed)'} — ${formatTime(m.event_date_time)}</div>`;
+      }
+      const side = m.participant_type === 'CONSUMER' ? 'them' : 'us';
+      return `<div class="bubble-row ${side}"><div><div class="bubble">${escapeHtml(m.text)}</div><div class="bubble-time">${formatTime(m.event_date_time)}</div></div></div>`;
+    }).join('');
+  } else {
+    threadHtml = '<div class="empty-state">No conversation history</div>';
+  }
+
+  panel.innerHTML = `
+    <div class="detail-header">
+      <button class="back-btn" onclick="closeDetail()">${ICONS.back}</button>
+      <div class="avatar ${lead.lead_type === 'PHONE_CALL' ? 'call' : 'message'}">${avatarIcon(lead)}</div>
+      <div class="detail-header-info">
+        <div class="detail-header-name">${lead.contact_phone || 'Unknown'}</div>
+        <div class="detail-header-sub">${escapeHtml(formatCategory(lead.category_id))} · ${lead.lead_status}${isMissedCall(lead) ? ' · Missed call' : ''}</div>
+      </div>
+    </div>
+    ${dupeHtml}
+    ${staleHtml}
+    <div class="thread" id="thread">${threadHtml}</div>
+    <div class="compose-status" id="compose-status"></div>
+    <div class="compose-bar">
+      <textarea id="compose-input" rows="1" placeholder="Type a reply..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendReply('${lead.id}');}"></textarea>
+      <button class="compose-send" id="compose-send-btn" onclick="sendReply('${lead.id}')">${ICONS.send}</button>
+    </div>
+    <div class="detail-fields">
+      <div class="field">
+        <div class="field-label">Google's raw status (their site may show something different — e.g. Archive/Completed aren't in this API)</div>
+        <div class="field-value">${lead.lead_status}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Charged / Credit</div>
+        <div class="field-value">${lead.lead_charged ? 'Charged' : 'Not charged'} — ${lead.credit_state}</div>
+      </div>
+      <div class="field">
+        <div class="field-label">Notes</div>
+        <input type="text" value="${escapeHtml(lead.notes || '')}" placeholder="Add note..." onblur="saveNote('${lead.id}', this.value)">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="action-btn primary" onclick="toggleResponded('${lead.id}', ${lead.responded})">${lead.responded ? 'Mark unresponded' : 'Mark responded'}</button>
+      <button class="action-btn" onclick="setLocalStatus('${lead.id}', 'Booked')">Mark Booked (local)</button>
+      <button class="action-btn" onclick="setLocalStatus('${lead.id}', 'Declined')">Mark Declined (local)</button>
+      ${lead.lead_status === 'BOOKED' ? `<button class="action-btn" onclick="toggleJobCompleted('${lead.id}')">${lead.job_completed_locally ? 'Unmark completed' : 'Mark job completed'}</button>` : ''}
+      <button class="action-btn" onclick="toggleArchived('${lead.id}')">${lead.archived ? 'Unarchive' : 'Archive'}</button>
+      <button class="action-btn disabled" title="Pending: ProvideLeadFeedback compliance question not yet resolved" disabled>Raise dispute (pending)</button>
+    </div>
+  `;
+}
+</script>
+</body>
+</html>

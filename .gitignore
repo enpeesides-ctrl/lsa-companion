@@ -1,0 +1,20 @@
+# Real credentials — never commit these
+scripts/.env
+scripts/client_secret.json
+*.token
+
+# Logs — local runtime output, not source
+scripts/sync.log
+scripts/launchd_stdout.log
+scripts/launchd_stderr.log
+
+# Netlify CLI local state (abandoned in favor of GitHub Pages)
+.netlify/
+
+# Supabase CLI local cache/link state, not source
+supabase/.temp/
+
+# OS/editor noise
+.DS_Store
+__pycache__/
+*.pyc
