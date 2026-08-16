@@ -671,3 +671,77 @@ scripts confirmed genuinely working on the second run.
 
 Logs: `scripts/sync.log` (application output),
 `scripts/launchd_stdout.log` / `launchd_stderr.log` (launchd-level).
+
+## Hosting — deployed and confirmed working 2026-08-15
+
+Dashboard is now live at **https://enpeesides-ctrl.github.io/lsa-companion/**
+— a real public HTTPS URL, reachable from any device, not dependent on
+this Mac being on (unlike the sync scripts, which still run locally via
+launchd — hosting the frontend does NOT solve that separate limitation).
+
+**Netlify was tried first and abandoned.** New Netlify accounts default
+to a mandatory team-level `site_sso_login` gate that requires a Netlify
+account login just to view any deployed site. Attempted to disable it via
+the API — the call returned success but silently left the setting
+unchanged, indicating a plan-enforced restriction, not something fixable
+via API. Rather than keep fighting an undocumented restriction, switched
+to GitHub Pages instead.
+
+**Setup**: real git repo created (`github.com/enpeesides-ctrl/lsa-companion`,
+public — required for free GitHub Pages), `.gitignore` verified BEFORE
+first commit to confirm `.env`/`client_secret.json`/logs were genuinely
+excluded (checked via `git check-ignore -v`, not assumed). Pages serves
+from `/docs` on `main` (`docs/index.html` = a copy of `site/dashboard.html`).
+
+**Real operational risk worth flagging now, not after it causes a
+problem**: this is the exact same hub-folder-vs-deploy-folder split that
+caused real desync bugs in Vertex's own project (features built and
+tested locally that were never actually live because the deploy copy
+wasn't updated). `site/dashboard.html` is the working copy for local
+testing; `docs/index.html` is what's actually live. **Any future dashboard
+change must update both files and be committed+pushed, or the live site
+will silently drift out of date** — applying that lesson proactively
+here instead of rediscovering it the hard way a second time.
+
+**Verified working**: polled until Pages' first build went live (~90
+seconds, 404 until then), confirmed the actual page title/content is
+correct — not just trusting the API's "success" response, given the
+Netlify lesson earlier in this same task.
+
+## Tier 2: after-hours logic + follow-up sequences — built and tested 2026-08-16
+
+**Call transcription investigated and found genuinely blocked, not just
+unbuilt** — `call_recording_url` is real and populated, but fetching the
+actual audio returns a 500 from Google's internal "Scotty" blob-storage
+infrastructure on a completely different domain (`ads.google.com`, not
+`googleads.googleapis.com` like every other call this project has made).
+Strongly suggests this needs a real logged-in browser session, not OAuth
+API access — not something worth continuing to guess at right now.
+Corrected an earlier premature claim that this was "confirmed possible."
+
+**After-hours logic** — `businesses.business_hours_start/end` (new
+columns, defaults 8/18), `auto_reply.py`'s `generate_reply()` now checks
+current local time and picks between the normal template and a distinct
+after-hours one. Verified directly against synthetic hour configs
+(always-open, always-closed, Vertex's real 8-18) — correct template
+selected in all three cases. Known limitation, not fixed: uses this
+machine's local time, correct for Vertex (single UK business) but would
+need a real per-business timezone field before serving businesses
+elsewhere correctly.
+
+**Follow-up sequences** — `send_followups.py`, using the `follow_up_sent`
+column that had sat unused in the schema since Phase 1. Targets leads
+that got the initial auto-reply, still aren't genuinely responded to,
+and are 24h-7days old (the upper bound is deliberate — applying the same
+"don't nudge on a lead old enough to look broken" lesson `auto_reply.py`
+already learned the hard way, proactively this time). Tested both paths:
+0 candidates against real current data (correct, nothing qualifies yet
+since `auto_reply.py` has never actually sent for real), and the positive
+path via a temporary, fully-reverted modification to one real lead —
+confirmed found and would have sent, then confirmed the lead's original
+state was restored exactly.
+
+**Neither script added to the automatic schedule** — both are DRY_RUN
+gated, same reasoning as `auto_reply.py` originally: adding them now
+would mean flipping DRY_RUN later starts real unattended sending on the
+very next scheduled run, a bigger risk change than making silently.

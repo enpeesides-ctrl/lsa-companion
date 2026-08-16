@@ -55,10 +55,27 @@ TEMPLATE = (
     "will get back to you shortly."
 )
 
+AFTER_HOURS_TEMPLATE = (
+    "Thanks for reaching out! We're currently closed — we've received "
+    "your message and will get back to you when we reopen."
+)
 
-def generate_reply(lead):
-    # Fixed template for now. A future AI upgrade only changes what
-    # happens inside this function.
+
+def is_after_hours(business):
+    # Uses this machine's local time — correct for Vertex (single,
+    # UK-based business, and this Mac already runs UK time), but a real
+    # limitation worth knowing: this would need a stored per-business
+    # timezone before it could serve businesses elsewhere correctly.
+    hour = datetime.now().hour
+    return not (business["business_hours_start"] <= hour < business["business_hours_end"])
+
+
+def generate_reply(lead, business):
+    # Template selection only for now. A future AI upgrade only changes
+    # what happens inside this function — the after-hours check itself
+    # stays valid either way.
+    if is_after_hours(business):
+        return AFTER_HOURS_TEMPLATE
     return TEMPLATE
 
 
@@ -107,7 +124,7 @@ def main():
 
     businesses = (
         supabase.table("businesses")
-        .select("id, name, google_ads_customer_id")
+        .select("id, name, google_ads_customer_id, business_hours_start, business_hours_end")
         .eq("status", "active")
         .execute()
     ).data
@@ -146,7 +163,7 @@ def main():
 
         for lead in candidates:
             lead_resource_name = f"customers/{customer_id}/localServicesLeads/{lead['google_lead_id']}"
-            text = generate_reply(lead)
+            text = generate_reply(lead, business)
             print(f"  lead {lead['google_lead_id']}:")
             success = send_reply(ga_client, customer_id, lead_resource_name, text)
 
