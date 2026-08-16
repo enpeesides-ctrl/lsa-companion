@@ -745,3 +745,111 @@ state was restored exactly.
 gated, same reasoning as `auto_reply.py` originally: adding them now
 would mean flipping DRY_RUN later starts real unattended sending on the
 very next scheduled run, a bigger risk change than making silently.
+
+## Cloud migration, part 1: sync-business Edge Function — built and verified 2026-08-16
+
+Committing to the Edge Functions rewrite (chosen over GitHub Actions or a
+standalone VM) for the long-term multi-tenant architecture — one
+platform, real scheduling, and a natural per-business invocation model
+instead of one script looping over every business.
+
+**Built**: `supabase/functions/_shared/google-ads.ts` (shared OAuth
+token exchange + GAQL search helper, reused by every future function)
+and `supabase/functions/sync-business/index.ts` — a full port of
+`sync_leads.py`'s three sync functions (leads, conversations, daily
+cost), one business per invocation rather than one script looping over
+all of them.
+
+**Real bug caught immediately on first test**: forgot to include
+`local_services_lead_conversation.id` in the ported GAQL query — every
+conversation row came back with `google_conversation_id: null`, hard
+constraint violation. Simple oversight in the port, not a REST-vs-Python
+API discrepancy. Fixed, redeployed, re-tested clean.
+
+**Verified thoroughly, not just "it returned 200"**: row counts matched
+the proven Python version exactly (177 leads, 322 messages, 16 cost-days)
+AND spot-checked actual field values on a known lead (316557066) —
+status, phone, category, and the full ordered message thread with
+correct CONSUMER/ADVERTISER attribution all matched exactly. Same
+discipline applied to `send-reply` earlier — a clean HTTP response alone
+was never treated as sufficient proof anywhere in this project.
+
+**Still needed before the local `launchd` job can be retired**:
+`send-alerts`, `check-spend-anomaly`, `check-verification-expiry`, and
+`webhook-export` Edge Functions (same port pattern), plus Supabase Cron
+scheduling to trigger `sync-business` (looped per active business) and
+these on a schedule. `auto-reply` and `send-followups` can stay
+Python/local longer, since they're still deliberately `DRY_RUN` and not
+part of the live operational path yet.
+
+## Cloud migration, part 2: remaining four functions ported — 2026-08-16
+
+**Built and deployed**, all following the exact `sync-business` pattern
+(one business per invocation, real data verification, not just HTTP
+200): `supabase/functions/_shared/resend.ts` (shared email helper,
+lifted straight from the Python scripts' `send_email()`), then
+`send-alerts`, `check-spend-anomaly`, `check-verification-expiry`, and
+`webhook-export`.
+
+Also set `RESEND_API_KEY` as a Supabase secret — it existed locally in
+`scripts/.env` but had never been pushed to the cloud project, so the
+new email-sending functions would have failed silently until this was
+caught before the first test, not after.
+
+**Architecture note**: the original `check_spend_anomaly.py` and
+`check_verification_expiry.py` looped over every active business in one
+process. Ported them to the same one-business-per-invocation shape as
+`sync-business` instead, for the same reason that shape was chosen
+originally — one business's failure (bad token, Google API hiccup)
+can't stall or crash the run for everyone else.
+
+**Verification, each one proven with real data, not just "it ran"**:
+
+- `send-alerts`: confirmed the zero-pending case first, then flipped a
+  real Vertex lead's `alert_sent` back to `false`, ran it for real,
+  confirmed a genuine Resend email went out (a 200 here is only
+  possible if Resend itself succeeded — a Resend failure throws and the
+  function returns 500), and confirmed the DB write landed on exactly
+  that lead and no others.
+- `check-verification-expiry`: ran against Vertex, synced 2 real
+  verification artifacts, and spot-checked the field values against the
+  already-known-correct data — insurance expiring 2027-03-13 with
+  £5,000,000 coverage (5,000,000,000,000 micros), business registration
+  check correctly carrying no expiration date. No alert fired, correctly
+  — 209 days out is past the 60-day threshold.
+- `webhook-export`: didn't want to fire a real customer's phone number
+  at a third-party test endpoint just to prove the code works, so
+  created a throwaway synthetic business + lead (fake phone number,
+  fake everything) instead of using real Vertex data, pointed its
+  `webhook_url` at a temporary webhook.site capture endpoint, ran the
+  function for real, and pulled back the exact captured HTTP request —
+  every field in the JSON payload matched what the code should have
+  sent, sent from the real deployed Deno/Supabase Edge Runtime (visible
+  in the request's own user-agent). Confirmed `webhook_sent` flipped to
+  `true` on the test lead. Deleted the synthetic business and lead
+  afterward — nothing fake left behind in real tables.
+- `check-spend-anomaly`: first ran it against real Vertex data as-is,
+  which surfaced an already-existing "already alerted for this date"
+  result — independently recomputed the ratio by hand from
+  `daily_cost` and confirmed it matched exactly (0.49, correctly below
+  the 0.5 low-anomaly threshold) and that a real alert row already
+  existed for that date. That path alone didn't exercise the actual
+  alert-send branch or the `account_budget.approved_spending_limit_micros`
+  REST call, which had been sitting as genuinely untested REST shape
+  since the `_shared/google-ads.ts` file was written — so inserted one
+  synthetic future-dated `daily_cost` row with a deliberately huge spend
+  spike, ran it again, and got a real fired alert: `ratio: 9.86,
+  direction: "unusually HIGH"`. The Google Ads budget cross-check call
+  succeeded for real (no error) and correctly came back null, matching
+  Vertex's already-known unset budget limit — proving both the
+  previously-unverified REST shape works and that the null-budget case
+  is handled the same way the Python version handled it. Deleted the
+  synthetic `daily_cost` row and the alert row it generated afterward.
+
+All four Python scripts (`send_alerts.py`, `check_spend_anomaly.py`,
+`check_verification_expiry.py`, `webhook_export.py`) now have verified
+cloud equivalents. Only remaining piece before the local `launchd` job
+can be retired: Supabase Cron scheduling to actually trigger
+`sync-business` + these four on a schedule, looped per active business.
+`auto-reply` and `send-followups` still deliberately stay Python/local
+(`DRY_RUN=True`, not part of the live operational path).
