@@ -853,3 +853,119 @@ can be retired: Supabase Cron scheduling to actually trigger
 `sync-business` + these four on a schedule, looped per active business.
 `auto-reply` and `send-followups` still deliberately stay Python/local
 (`DRY_RUN=True`, not part of the live operational path).
+
+## Cloud migration, part 3: Supabase Cron scheduling — 2026-08-16
+
+**Built**: `migrations/2026-08-16_cron_scheduling.sql`. Enables
+`pg_cron` and `pg_net`, adds a `dispatch_edge_function(function_name)`
+Postgres function that fires one independent `net.http_post` per active
+business per Edge Function (same one-invocation-per-business isolation
+the functions themselves were built around — one business's failure
+can't block or slow the others), and schedules all five jobs.
+
+Matched the real existing cadence rather than guessing: the local
+`com.lsacompanion.sync` launchd job runs every 30 minutes
+(`StartInterval=1800`, confirmed by reading the actual plist, not
+assumed from memory). `sync-business` is scheduled on that same
+`*/30 * * * *` cadence; the four downstream functions are staggered 5,
+5, 10, and 15 minutes after each sync window so `send-alerts` and
+`check-spend-anomaly` — which read data `sync-business` just wrote —
+aren't racing it.
+
+**Deliberately did not hardcode the service_role key into the
+migration file.** pg_cron needs a credential to authenticate its HTTP
+calls to the Edge Functions, same as our own test calls did, but this
+migration file is the kind of thing that ends up in git history
+forever. Instead it's read from Supabase Vault at call time via
+`vault.decrypted_secrets` — the exact same pattern already established
+by `get_refresh_token()` for Google refresh tokens. Requires a one-time
+manual step (documented at the top of the migration file) where the
+key is pasted directly into the Supabase SQL Editor's Vault insert —
+never through this chat, never through a committed file.
+
+**Not yet done / explicitly holding off**: the local `launchd` job
+(`com.lsacompanion.sync`) has NOT been disabled yet. Want to see the
+cron jobs actually fire successfully in production first — there's a
+real difference between "the migration ran without error" and "the
+jobs are genuinely executing on schedule," and this project's own
+established discipline says don't claim the second from the first.
+Verification query to run in the SQL Editor after the migration's been
+applied and at least one 30-minute window has passed:
+
+```sql
+select jobname, status, return_message, start_time, end_time
+from cron.job_run_details
+order by start_time desc
+limit 20;
+```
+
+Once that shows clean runs across all five jobs for a full cycle,
+`launchd unload` the local job and remove the plist.
+
+## Cloud migration, part 3 continued: cron.job_run_details "succeeded" was misleading — real bug found and fixed, 2026-08-19
+
+**Exactly the trap flagged above.** `cron.job_run_details` showed every
+job as `status: succeeded, return_message: 1 row` from the very first
+run — but that only proves `dispatch_edge_function()`'s SQL executed
+without a Postgres-level error (Vault lookup worked, the loop over
+active businesses ran). It says nothing about whether the async
+`net.http_post` call it queues actually reached the Edge Function
+successfully, since pg_net is fire-and-forget from Postgres's side.
+
+Checked the real evidence — `net._http_response` (the table pg_net
+actually writes HTTP responses to) — and found **every single call
+since the migration was applied had been failing with `401
+UNAUTHORIZED_INVALID_JWT_FORMAT`**. Three days of "succeeded" cron runs
+had done nothing but repeatedly fail to authenticate.
+
+**Root cause**: this Supabase project has already partially migrated to
+the new publishable/secret API key system (`SUPABASE_SECRET_KEYS` /
+`SUPABASE_PUBLISHABLE_KEYS` already existed as Edge Function secrets
+from earlier work) alongside the legacy JWT-format `service_role` key.
+The value pasted into Vault during the one-time manual setup step was
+the new-format `sb_secret_...` key, not the legacy JWT — sent as
+`Authorization: Bearer sb_secret_...`, Supabase's edge gateway rejects
+it outright as not being shaped like a JWT at all (distinct from a
+signature/expiry failure, which is why the error was specifically
+"invalid format" not "unauthorized"). Confirmed the correct value by
+checking `scripts/.env`'s `SUPABASE_SERVICE_ROLE_KEY` shape directly
+(starts with `eyJ`, 3 dot-separated segments — genuine JWT structure)
+without ever printing the actual key value into chat.
+
+**Fixed** via `vault.update_secret(id, new_value)` against the existing
+secret's UUID, swapping in the correct legacy JWT key. Re-checked
+`net._http_response` after the next scheduled fire and got real,
+correct results:
+
+```
+sync-business:             {"success":true,"business":"Vertex Property Care","leadsSynced":177,"conversationsSynced":{"leadsUpdated":93,"messagesSynced":322},"costDaysSynced":15}
+send-alerts:                {"alertsSent":0}
+check-spend-anomaly:        {"anomaly":true,"alerted":false,"reason":"already alerted for this date"}
+check-verification-expiry:  {"artifactsSynced":2,"alertsSent":[]}
+webhook-export:              {"skipped":true,"reason":"no webhook configured"}
+```
+
+All five match exactly what real Vertex data should produce (177
+leads/322 messages is the same known-good count verified multiple
+times earlier; 2 verification artifacts and no webhook match the
+already-confirmed real state). Confirmed clean across **two full
+30-minute cycles**, not just one.
+
+**Cron scheduling is now genuinely, not just nominally, working.**
+Ready to retire the local `launchd` job — holding off only on the
+user's go-ahead, since disabling it is the last step and worth doing
+deliberately rather than folded into this same check.
+
+**Retired, 2026-08-19**: `launchctl unload`'d `com.lsacompanion.sync`,
+confirmed it no longer appears in `launchctl list`, then moved the
+plist to `com.lsacompanion.sync.plist.disabled` in the same
+`~/Library/LaunchAgents/` directory rather than deleting it outright —
+easy to restore if the cloud pipeline ever needs a fallback. The sync
+pipeline (`sync-business` → `send-alerts` / `check-spend-anomaly` /
+`check-verification-expiry` / `webhook-export`) now runs entirely on
+Supabase Cron, no longer dependent on this Mac being on. `auto-reply`
+and `send-followups` remain the only pieces still local/Python, still
+deliberately `DRY_RUN=True` and outside the scheduled pipeline by
+design.
+
+**Cloud migration (parts 1–3) is now complete.**
