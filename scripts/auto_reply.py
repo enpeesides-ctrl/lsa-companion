@@ -42,7 +42,7 @@ MANAGER_CUSTOMER_ID = ENV["MANAGER_CUSTOMER_ID"].replace("-", "")
 # SAFETY: leave this True until you've reviewed dry-run output
 # and deliberately decide to let real messages send.
 # ============================================================
-DRY_RUN = True
+DRY_RUN = False
 
 # Added after dry-run testing surfaced a real bug: with no recency filter,
 # this matched 18 leads spanning March-August 2026 — sending "we just got

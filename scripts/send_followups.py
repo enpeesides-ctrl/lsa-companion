@@ -44,7 +44,7 @@ MANAGER_CUSTOMER_ID = ENV["MANAGER_CUSTOMER_ID"].replace("-", "")
 # SAFETY: leave this True until you've reviewed dry-run output
 # and deliberately decide to let real follow-ups send.
 # ============================================================
-DRY_RUN = True
+DRY_RUN = False
 
 FOLLOWUP_DELAY_HOURS = 24
 FOLLOWUP_MAX_AGE_HOURS = 24 * 7  # don't nudge on leads older than a week

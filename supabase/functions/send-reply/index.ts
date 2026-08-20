@@ -132,7 +132,14 @@ Deno.serve(async (req) => {
     )
 
     const appendData = await appendResponse.json()
-    if (!appendResponse.ok) {
+    // Google's REST API returns HTTP 200 even when the append itself
+    // failed — the real result is per-item inside responses[].
+    // partialFailureError. Confirmed directly against a deliberately
+    // invalid lead ID during the auto-reply port: got a clean 200 with
+    // an INTERNAL_ERROR buried in the body. Checking appendResponse.ok
+    // alone would have silently marked a failed send as successful.
+    const partialFailure = appendData?.responses?.[0]?.partialFailureError
+    if (!appendResponse.ok || partialFailure) {
       return jsonResponse({ error: 'Google API call failed', detail: appendData }, 502)
     }
 

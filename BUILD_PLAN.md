@@ -1003,3 +1003,91 @@ not column-restricted — same policy already letting `notes`/
 `local_status_override`/`archived` work from the authenticated browser
 session, so the new column follows the identical path with no separate
 grant needed.
+
+## Auto-reply and follow-ups: flipped live, ported to Cron, real bug found and fixed — 2026-08-20
+
+**`DRY_RUN` flipped to `False`** in both `auto_reply.py` and
+`send_followups.py`, per explicit user decision after being walked
+through exactly what each template says and when it fires. Ran
+`auto_reply.py` once locally in live mode to confirm it executes
+cleanly — 0 candidates existed at that moment, so nothing actually sent
+yet, but the live code path (no longer just printing "would send")
+ran without error.
+
+**Real gap surfaced immediately**: flipping `DRY_RUN` alone doesn't
+achieve the original point of auto-reply — response *speed*. Neither
+script was ever added to the local `launchd` schedule (deliberately
+excluded originally) or the new Supabase Cron migration. Without a real
+trigger, nothing fires until someone remembers to run the script by
+hand, which defeats the entire premise this feature was built for.
+Ported both to Edge Functions to close this for real.
+
+**Built**: `supabase/functions/auto-reply/index.ts` and
+`supabase/functions/send-followups/index.ts`, same one-business-per-
+invocation pattern as everything else, reusing `_shared/google-ads.ts`'s
+token exchange and the exact `appendLeadConversation` REST call already
+proven working in `send-reply`.
+
+**Real correctness fix made during the port, not a blind copy**: the
+Python version used `datetime.now().hour` — whichever timezone the Mac
+running it happened to be in (confirmed `Europe/London` via
+`readlink /etc/localtime`, currently BST/UTC+1). There's no equivalent
+"local machine time" in Supabase's cloud runtime; using the server's
+raw UTC hour would have been silently wrong by an hour for half the
+year. Hardcoded `Europe/London` explicitly via `Intl.DateTimeFormat`
+with an explicit `timeZone` option instead, matching what the Mac was
+implicitly doing. Cross-checked against Python's real `zoneinfo`
+database independently before trusting it. Same known limitation as
+before, just now explicit instead of accidental: needs a real
+per-business timezone column before this can correctly serve businesses
+outside the UK.
+
+**A real, previously-undetected bug found while testing this, affecting
+the already-live `send-reply` function too**: Google's REST API returns
+HTTP 200 even when `appendLeadConversation` genuinely fails — the real
+result is buried per-item inside `responses[].partialFailureError`.
+Confirmed directly: a deliberately invalid `google_lead_id` (a
+synthetic test lead, never a real customer's data) got a clean `200`
+with `partialFailureError: { code: 13, message: "An internal error
+occurred" }` in the body. All three functions that call this endpoint
+(`send-reply`, `auto-reply`, `send-followups`) only checked
+`response.ok` — meaning a genuine Google-side failure would have been
+silently recorded as a successful send (`responded`/`auto_reply_sent`/
+`follow_up_sent` all flipped `true` on a message that never actually
+reached the customer). This is exactly the kind of gap that stays
+invisible until it actually matters — `send-reply`'s one real customer
+test happened to fully succeed, so this was never triggered in
+production, but the code itself was wrong the whole time.
+
+Fixed all three to check `!responses?.[0]?.partialFailureError` in
+addition to HTTP status, redeployed, and **re-verified the fix actually
+catches the failure** (not just that it compiles) — re-ran the same
+invalid-lead-id test post-fix and confirmed `auto-reply` now correctly
+reports `failed: 1` with the real Google error surfaced, and the synthetic
+lead's `auto_reply_sent` stayed `false` (previously it would have
+incorrectly flipped `true`). Same re-test done for `send-followups`.
+Synthetic test leads deleted after each check — nothing fake left in
+real tables.
+
+**Scheduled**: `migrations/2026-08-20_schedule_auto_reply.sql` adds
+`lsa-auto-reply` (`2,32 * * * *` — 2 minutes after each `sync-business`
+window, as close as reasonably possible since a lead can't be known to
+us before the sync that pulls it in) and `lsa-send-followups`
+(`20,50 * * * *` — lighter cadence, since a 24h+ nudge isn't as
+time-sensitive as the first response). Confirmed via `net._http_response`
+after both fired for real: `{"repliedTo":0}` and `{"followedUpWith":0}`,
+both `200`, both correct for the current real state (no eligible leads
+right now).
+
+**Known, accepted latency characteristic, not a bug**: worst case, a
+lead arriving right as a sync window starts waits up to ~32 minutes for
+`sync-business` to see it plus `auto-reply` to act on it — a real
+consequence of polling a 30-minute-cadence API, not something this
+schedule can improve on further without `sync-business` itself running
+more often.
+
+**Still not verified**: a genuine real send succeeding for real, live,
+scheduled auto-reply/follow-up messages — no eligible lead has existed
+yet since this went live. That's the real next confirmation, whenever a
+new message lead actually arrives.
+grant needed.
