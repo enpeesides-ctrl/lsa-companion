@@ -1090,4 +1090,48 @@ more often.
 scheduled auto-reply/follow-up messages — no eligible lead has existed
 yet since this went live. That's the real next confirmation, whenever a
 new message lead actually arrives.
-grant needed.
+
+## Privacy policy — drafted, not published, real gaps flagged — 2026-08-20
+
+Closes the data-privacy decision flagged as required back in Phase 1
+("this product holds real consumer PII... Not fully resolvable in this
+plan — flagging as a required decision before Phase 1 is considered
+done") and never actually resolved until now.
+
+**Built**: `PRIVACY_POLICY.md`. Grounded in the actual current schema
+and infrastructure, not written generically — checked directly rather
+than assumed: the exact PII fields stored (`contact_phone`, message
+text, call duration, from `leads`/`conversation_messages`), the real
+Supabase hosting region (`eu-west-1`, confirmed via
+`supabase projects list`), and the real sub-processors already in use
+(Supabase, Google, Resend, GitHub Pages for static hosting only).
+
+**Structural decision**: split into two distinct data relationships
+rather than one blanket policy, since they're genuinely different —
+LSA Companion is the **data controller** for business account data
+(login, business settings), but only a **data processor** for
+end-customer lead data (phone numbers, messages) collected on behalf
+of each business from their own Google Local Services Ads account.
+Conflating these would have misstated the product's actual legal
+position.
+
+**Decisions made explicitly, not defaulted silently**: sole trader (no
+registered company yet), `enpee.sides@gmail.com` as the privacy
+contact, 90-day retention after a business disconnects.
+
+**Deliberately left unresolved, marked in the document itself rather
+than glossed over**:
+- `[TO CONFIRM]` — the user's actual full legal name (placeholder left
+  in, not guessed).
+- `[TO CONFIRM]` — Resend's international-transfer compliance position
+  was never independently verified.
+- `[TO BUILD]` — the stated 90-day retention policy is **not yet
+  technically enforced**. No scheduled deletion job exists. The
+  document explicitly says so rather than describing an aspirational
+  policy as current behavior — same "don't claim what you haven't
+  verified" discipline as everywhere else in this project.
+
+**Status: draft only, not linked from the dashboard, not shown to any
+real business** — per explicit decision. Needs solicitor review before
+being treated as binding, and the retention-deletion job needs building
+before section 6 of the document is actually true.
