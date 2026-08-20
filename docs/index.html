@@ -151,6 +151,7 @@
   .badge { font-size: 10px; padding: 2px 6px; border-radius: 6px; font-weight: 600; }
   .badge.missed { background: rgba(255, 159, 10, 0.15); color: var(--warn); }
   .badge.flagged { background: rgba(255, 69, 58, 0.15); color: var(--danger); }
+  .badge.job-date { background: rgba(48, 209, 88, 0.15); color: var(--success); }
   .unread-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
   .empty-state { padding: 60px 20px; text-align: center; color: var(--text-muted); font-size: 14px; }
 
@@ -388,6 +389,12 @@ function formatTime(dateStr) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+function formatDate(dateStr) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 function findDuplicates(lead) {
   if (!lead.contact_phone) return [];
   return allLeads.filter(l => l.id !== lead.id && l.contact_phone === lead.contact_phone);
@@ -438,6 +445,7 @@ function render() {
     const badges = [];
     if (isMissedCall(l)) badges.push('<span class="badge missed">MISSED</span>');
     if (isFlagged(l)) badges.push('<span class="badge flagged">FLAGGED</span>');
+    if (l.booked_job_date) badges.push(`<span class="badge job-date">Job: ${formatDate(l.booked_job_date)}</span>`);
     return `
       <div class="chat-item ${!l.responded ? 'unread' : ''} ${l.id === selectedLeadId ? 'selected' : ''}" onclick="openLeadDetail('${l.id}')">
         <div class="avatar ${l.lead_type === 'PHONE_CALL' ? 'call' : 'message'}">${avatarIcon(l)}</div>
@@ -469,6 +477,13 @@ async function setLocalStatus(id, status) {
   await _db.from('leads').update({ local_status_override: status }).eq('id', id);
   allLeads.find(l => l.id === id).local_status_override = status;
   openLeadDetail(id);
+  render();
+}
+
+async function saveBookedDate(id, value) {
+  await _db.from('leads').update({ booked_job_date: value || null }).eq('id', id);
+  const lead = allLeads.find(l => l.id === id);
+  if (lead) lead.booked_job_date = value || null;
   render();
 }
 
@@ -615,6 +630,11 @@ async function openLeadDetail(id) {
         <div class="field-label">Notes</div>
         <input type="text" value="${escapeHtml(lead.notes || '')}" placeholder="Add note..." onblur="saveNote('${lead.id}', this.value)">
       </div>
+      ${(lead.lead_status === 'BOOKED' || lead.local_status_override === 'Booked') ? `
+      <div class="field">
+        <div class="field-label">Job date</div>
+        <input type="date" value="${lead.booked_job_date || ''}" onchange="saveBookedDate('${lead.id}', this.value)">
+      </div>` : ''}
     </div>
     <div class="actions">
       <button class="action-btn primary" onclick="toggleResponded('${lead.id}', ${lead.responded})">${lead.responded ? 'Mark unresponded' : 'Mark responded'}</button>

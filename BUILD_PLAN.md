@@ -969,3 +969,37 @@ deliberately `DRY_RUN=True` and outside the scheduled pipeline by
 design.
 
 **Cloud migration (parts 1–3) is now complete.**
+
+## Booking date capture — built and verified 2026-08-19
+
+Real gap flagged during an earlier review of the tool's usability
+("does Mark Booked give you a date to select?" — it didn't) and picked
+as the first thing to fix now that cloud migration is done, since it
+affects Vertex's daily use directly, independent of multi-tenant work.
+
+**Built**: `migrations/2026-08-19_booked_job_date.sql` adds
+`leads.booked_job_date` (plain `date`, nullable). Dashboard changes
+(`site/dashboard.html`, synced to `docs/index.html` — same
+hub/deploy-folder pair flagged as a standing risk during hosting setup,
+kept in sync this time by diffing before overwrite, not just copying
+blind):
+- A "Job date" field appears in the lead detail panel whenever a lead
+  is Booked (either Google's real `lead_status` or the local override),
+  right below Notes, using the same immediate-save-on-change pattern
+  already used elsewhere in the dashboard.
+- A small green "Job: <date>" badge shows in the list view once a date
+  is set, so it's scannable without opening the lead.
+
+**Verified without logging into the dashboard** — entering a password
+into any login form isn't something done even for the project's own
+tools, so full click-through UI verification wasn't possible here.
+Instead: confirmed the migration genuinely landed by querying the
+column directly (not just trusting "done"), round-tripped the exact
+write/clear call `saveBookedDate()` makes against a real Vertex BOOKED
+lead (set to 2026-09-05, read back correctly, cleared back to null,
+lead left exactly as found), and confirmed the RLS policy on `leads` is
+row-scoped (`for all ... using (business_members membership check)`),
+not column-restricted — same policy already letting `notes`/
+`local_status_override`/`archived` work from the authenticated browser
+session, so the new column follows the identical path with no separate
+grant needed.
