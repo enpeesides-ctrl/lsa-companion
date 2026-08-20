@@ -103,13 +103,17 @@ confirmed directly, not assumed.
 days after a business disconnects** from LSA Companion (`businesses.status
 = 'disconnected'`), then permanently deleted.
 
-**`[TO BUILD]` — this is not yet technically enforced.** No scheduled
-deletion job exists in the codebase today. This section describes the
-intended policy, not current behavior. Do not present this document as
-accurate to a real customer until the deletion job is actually built
-and verified — the same "verify it actually landed, don't just trust
-the description" discipline used everywhere else in this project
-applies here too.
+**Enforced as of 2026-08-20.** A daily job (`purge_disconnected_business_data()`,
+scheduled via Supabase Cron at 03:00 UTC) deletes `leads` rows — and
+their associated messages, via cascade — for any business disconnected
+more than 90 days. The business's own account row is not deleted, only
+its former customers' lead data. Verified with synthetic test data
+(never real customer data): a business disconnected 100 days ago had
+its lead correctly purged (cascade-deleting the message too), a
+business disconnected only 10 days ago was correctly left untouched,
+and an audit record (`data_retention_purges`) was correctly created for
+the purge and correctly absent for the non-purge. Real Vertex data
+confirmed untouched throughout.
 
 ## 7. Security measures
 

@@ -1133,5 +1133,49 @@ than glossed over**:
 
 **Status: draft only, not linked from the dashboard, not shown to any
 real business** — per explicit decision. Needs solicitor review before
-being treated as binding, and the retention-deletion job needs building
-before section 6 of the document is actually true.
+being treated as binding.
+
+## Retention-deletion job — built and verified 2026-08-20
+
+Closes the `[TO BUILD]` gap flagged in the privacy policy the same day
+it was drafted — section 6 promised 90-day deletion after a business
+disconnects, but nothing enforced it.
+
+**Built**: `migrations/2026-08-20_retention_purge.sql` —
+`purge_disconnected_business_data()`, a plain Postgres function
+(`security definer`, no external API involved) that deletes `leads`
+rows for any business `disconnected_at` more than 90 days ago.
+Deliberately scoped to `leads` only, not `daily_cost`/
+`verification_artifacts` — those describe the business's own account,
+not their customers, and aren't what section 6 promises to delete.
+`conversation_messages.lead_id` already has `on delete cascade` to
+`leads` (confirmed by reading the migration, not assumed), so deleting
+a lead automatically removes its messages too — no separate delete
+needed for that table. The business's own row is never deleted, only
+its former customers' lead data.
+
+Scheduled directly via `pg_cron` at `0 3 * * *` (daily, 03:00 UTC) —
+no `net.http_post`/Vault credential needed here unlike the other
+scheduled jobs, since this never leaves Postgres.
+
+Added `data_retention_purges` as an audit trail (business_id snapshot,
+business_name snapshot, leads_deleted count, timestamp) — deliberately
+not foreign-keyed to `businesses`, so the audit record survives
+independently of whatever happens to the business row later. Real,
+verifiable evidence the policy is actually being enforced, not just
+asserted.
+
+**Verified with synthetic data, never real Vertex data, given this is
+a genuinely destructive operation**: created two throwaway disconnected
+businesses — one `disconnected_at` 100 days ago, one 10 days ago — each
+with a synthetic lead and message. Ran the purge function for real.
+Confirmed: the 100-day business's lead AND message were both deleted
+(cascade proven, not assumed), its business row survived, and a correct
+audit record was created; the 10-day business's lead and message were
+both left completely untouched, and correctly got no audit record.
+Real Vertex data checked before and after — still exactly 177 leads,
+business row still `active` — confirmed untouched throughout. Cleaned
+up both synthetic businesses and the synthetic audit row afterward.
+
+`PRIVACY_POLICY.md` section 6 updated from `[TO BUILD]` to describing
+actual, verified, enforced behavior.
