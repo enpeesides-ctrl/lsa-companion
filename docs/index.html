@@ -41,7 +41,7 @@
     background: var(--bg);
     color: var(--text);
     margin: 0;
-    height: 100vh;
+    height: 100vh; height: 100dvh;
     overflow: hidden;
     transition: background 0.2s ease, color 0.2s ease;
   }
@@ -71,16 +71,16 @@
   #login-error { color: var(--danger); font-size: 13px; margin-top: 10px; }
 
   /* ---------- App shell ---------- */
-  #app { display: none; height: 100vh; }
+  #app { display: none; height: 100vh; height: 100dvh; }
   .shell {
-    display: flex; height: 100vh;
+    display: flex; height: 100vh; height: 100dvh;
   }
   .list-panel {
     width: 100%; max-width: 420px; border-right: 1px solid var(--border);
-    display: flex; flex-direction: column; height: 100vh;
+    display: flex; flex-direction: column; height: 100vh; height: 100dvh;
   }
   .detail-panel {
-    flex: 1; display: flex; flex-direction: column; height: 100vh;
+    flex: 1; display: flex; flex-direction: column; height: 100vh; height: 100dvh;
     background: var(--bg);
   }
   @media (max-width: 760px) {

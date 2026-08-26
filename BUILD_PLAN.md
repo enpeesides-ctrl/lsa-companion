@@ -1179,3 +1179,87 @@ up both synthetic businesses and the synthetic audit row afterward.
 
 `PRIVACY_POLICY.md` section 6 updated from `[TO BUILD]` to describing
 actual, verified, enforced behavior.
+
+## Multi-tenant access risk — re-verified against primary docs, and a bigger live gap found — 2026-08-20
+
+Started multi-tenant work by re-checking the open risk flagged in
+`CLAUDE.md` since the project began: whether servicing multiple
+unrelated third-party businesses through one Manager Account needs
+anything beyond Basic/Explorer access. Phase 0's original finding on
+this was explicitly marked `[Medium confidence]` (a WebSearch summary,
+never checked against Google's own primary docs) — read the actual
+pages directly this time.
+
+**Good news, now actually confirmed rather than assumed**: no distinct
+approval category exists for multi-client/third-party tools. Access
+tiers (Test/Explorer/Basic/Standard) apply the same regardless of
+whether the developer manages one account or many separately-linked
+ones. Re-checked the RMF-for-external-users requirement specifically
+too (worried it might contradict the original Phase -1 finding) —
+confirmed it only attaches to **Standard** access, not Basic/Explorer,
+even when serving external users. The original architecture assumption
+holds.
+
+**Bigger, more urgent gap surfaced in the process, unrelated to
+multi-tenancy specifically but found while re-reading this policy**:
+Phase -1's original compliance review only ever confirmed the *read*
+path (`local_services_lead` reporting) under the "Reporting"
+permissible-use category. `AppendLeadConversation` — the write
+capability that `send-reply`, `auto-reply`, and `send-followups` all
+use, **already live in production sending real messages to real
+customers** — falls under a different category ("Ad creation/
+management" per Google's access-levels page) that was explicitly
+flagged as needing resolution before real sends went live
+("`BUILD_PLAN.md` line 314, Phase 3: *this can't stay open once we're
+actually sending real messages*") and then never actually resolved.
+The calls have technically succeeded every time (Explorer/Basic tier
+doesn't technically block the write call — confirmed empirically by
+every real send so far working), but "technically permitted to
+execute" and "compliant with our token's approved permissible use" are
+different questions, and only the second one is actually still open.
+
+**Real, actionable next step, not just more reading**: found the actual
+contact channel — Google's Ads API Compliance form at
+`support.google.com/adspolicy/contact/contact_ads_api`, which
+explicitly covers "Policy or RMF questions." Typical response time ~2
+business days. This needs the account's own developer token/MCC details
+to submit, so it's a real-world action for the user to take, not
+something to submit on their behalf sight-unseen.
+
+**Not a hard blocker to continued building** — the write calls
+continue to work technically, and this exact ambiguity already existed
+before today for Vertex alone; it just becomes more consequential the
+more businesses depend on it. Flagging clearly rather than either
+overstating it as an emergency or quietly leaving it exactly as
+unresolved as before.
+
+## Real mobile bug found by the user testing on their own phone — fixed 2026-08-20
+
+User tested the live dashboard on their actual phone (first real
+on-device test since the WhatsApp-style mobile redesign) and found the
+bottom action buttons (Mark Booked, Archive, etc.) hidden behind the
+mobile browser's own toolbar, unclickable.
+
+**Root cause**: `height: 100vh` used across the app shell (`body`,
+`#app`, `.shell`, `.list-panel`, `.detail-panel`). On mobile, `100vh`
+equals the viewport height with the browser's address/toolbar chrome
+*hidden* — but that chrome is visible more often than not, so the
+actual visible area is smaller than `100vh`, pushing content anchored
+to the bottom of a `100vh` container off-screen behind the browser's
+own UI. The `.actions` row already had correct `env(safe-area-inset-bottom)`
+padding for the iOS home indicator — that wasn't the bug, the container
+height was.
+
+**Fixed**: added `height: 100dvh` (dynamic viewport height, tracks the
+real visible area) alongside each `100vh` declaration as a
+progressive-enhancement override — old browsers keep the `vh` fallback,
+modern ones get the corrected `dvh` value. Synced to both
+`site/dashboard.html` and `docs/index.html`.
+
+**Honest limitation on verification**: could not reproduce this myself
+— it depends on real mobile browser toolbar show/hide behavior, which
+this environment's preview tools don't genuinely simulate (resizing a
+viewport isn't the same as a real phone's dynamic chrome). Confirmed
+the CSS change is syntactically correct and applied identically to both
+files; the actual fix confirmation needs the user re-testing on their
+real phone.
