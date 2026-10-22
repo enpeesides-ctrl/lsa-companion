@@ -1263,3 +1263,105 @@ viewport isn't the same as a real phone's dynamic chrome). Confirmed
 the CSS change is syntactically correct and applied identically to both
 files; the actual fix confirmation needs the user re-testing on their
 real phone.
+
+## Major incident: the entire pipeline was silently dead for ~2 months — found, diagnosed, fixed 2026-10-22
+
+User reported "recent calls and messages aren't showing up." This
+turned out to be much bigger than a display bug.
+
+**What was actually happening**: every lead in the database had a
+`synced_at` no later than 2026-08-15, and the lead count had been stuck
+at exactly 177 since then. It's now 2026-10-22 — **every scheduled
+function (sync, auto-reply, follow-ups, all alerts) had been failing on
+every single run for roughly two months**, while `cron.job_run_details`
+kept reporting "succeeded" the entire time (the dispatcher SQL runs
+fine regardless of whether the downstream call actually works — the
+exact same class of misleading-success gap this project got bitten by
+once already during the original Cron setup, now recurring in a new
+form).
+
+**Root cause, confirmed directly, not guessed**: calling Google's OAuth
+token endpoint with the stored refresh token returned `invalid_grant`.
+Checked Google's own setup docs: the OAuth consent screen was in
+**Testing** publishing status, and Google automatically expires
+refresh tokens issued under Testing after exactly 7 days, regardless of
+usage. The token was obtained once on 2026-08-14 and never renewed —
+consistent with everything breaking right around the 7-day mark and
+staying broken silently ever since.
+
+**Real troubleshooting detour, worth recording honestly**: getting a
+fresh token wasn't simple. Google's consent screen kept showing a
+passkey-creation prompt with no visible skip option, looping back to
+the account page. Investigated two wrong theories before finding the
+real one:
+- First suspected the test-user list didn't include the right account
+  — checked directly, it was actually fine (the account listed was
+  correctly the one that administers LSA Companion's Google Ads
+  Manager Account, not Vertex's own account directly — API access
+  flows through the Manager Account link, never required being "a user
+  on Vertex's Ads account" in the first place; an earlier answer in
+  this same conversation incorrectly assumed otherwise before catching
+  it).
+- Separately discovered the user had been looking in the wrong Google
+  Cloud Console account entirely (project list showed "create a
+  project" — confirmed via the project's actual `project_id` from
+  `client_secret.json`, not guessed).
+- Also had to re-locate the OAuth consent screen UI itself — Google
+  reorganized this under new "Google Auth Platform" branding since this
+  project was first built, moving "Publishing status" and "Test users"
+  onto a page now called "Audience" (confirmed via Google's current
+  support docs, not assumed from training-era memory).
+- The actual passkey loop itself turned out to be an unrelated
+  Google sign-in UX quirk, resolved by just retrying — not caused by
+  any of the above.
+
+**Fix applied and independently verified at every layer, not just
+trusted**:
+1. Ran `get_refresh_token.py` in the background (output redirected to
+   a file, since Python buffers stdout when not attached to a
+   terminal — first attempt produced no visible output until restarted
+   with `-u` for unbuffered output).
+2. User completed the real Google sign-in/consent themselves — the
+   refresh token itself was never pasted into this chat, by either
+   side; it was read from the local output file directly
+   (programmatically, never printed to chat) to update Vault's
+   `vertex_refresh_token` secret via `vault.update_secret()` with the
+   already-known secret UUID, and to update `scripts/.env` locally for
+   manual debugging scripts.
+3. Verified the new token works by calling Google's API directly,
+   independent of our own Edge Function: real `200`, **181 leads now
+   vs. 177 before**, including genuinely new ones dated 2026-10-15.
+4. Then triggered the actual deployed `sync-business` function for
+   real (not just the direct-API test script) and confirmed the same
+   181/328-message counts landed, with fresh `synced_at` timestamps —
+   proving the whole Vault → Edge Function → database path works, not
+   just the token in isolation.
+5. Deleted the temporary file holding the refresh token in plaintext
+   once no longer needed.
+
+**Real consequence flagged to the user, not glossed over**: 4 leads
+from the outage window (dated 2026-10-15) will NOT get an automatic
+reply — `auto-reply` only acts on leads under 24 hours old by design,
+so nothing retroactively catches up on a backlog. One of them (a
+MESSAGE lead, still unresponded) needs a manual reply from the user
+directly; this is not something the automation will ever do for leads
+from this window.
+
+**Not yet resolved — real open follow-ups**:
+- The OAuth consent screen is still in Testing status. Unless moved to
+  "In production," this exact failure mode will repeat every 7 days
+  the token isn't manually renewed. Moving to Production may require
+  Google's app verification process for this scope — not yet checked
+  how long that takes or what it requires.
+- **No monitoring exists that would have caught this sooner.** Two
+  months of complete silent failure is a real gap — `cron.job_run_details`
+  showing "succeeded" is not sufficient monitoring, as this incident
+  proves for the second time. Worth a real alert (e.g. a cron job that
+  checks "has `leads.synced_at` advanced in the last N hours" and emails
+  if not) rather than relying on someone noticing missing customer
+  messages by chance.
+- Unclear whether missed-call alerting (`send_missed_call_alerts.py`
+  from earlier in this project) was ever ported to the cloud pipeline
+  at all — worth checking separately, since if not, that's been
+  unscheduled (not just broken) this whole time, a different kind of
+  gap from everything else in this incident.
