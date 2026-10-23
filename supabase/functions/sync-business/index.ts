@@ -46,6 +46,7 @@ async function syncLeads(supabase: any, accessToken: string, opts: any, business
   `
   const rows = await gaqlSearch({ ...opts, accessToken, query })
 
+  const now = new Date().toISOString()
   const records = rows.map((row) => {
     const l = row.localServicesLead
     return {
@@ -61,6 +62,12 @@ async function syncLeads(supabase: any, accessToken: string, opts: any, business
       credit_state: l.creditDetails?.creditState || 'UNSPECIFIED',
       category_id: l.categoryId || null,
       service_id: l.serviceId || null,
+      // Explicit, not relied on as a column default — a default only
+      // applies on INSERT, never on an upsert's UPDATE path, which is
+      // exactly why every pre-existing lead kept showing a two-month-old
+      // synced_at even while the sync was (when the token worked)
+      // genuinely re-confirming them successfully every 30 minutes.
+      synced_at: now,
     }
   })
 

@@ -1365,3 +1365,102 @@ from this window.
   at all — worth checking separately, since if not, that's been
   unscheduled (not just broken) this whole time, a different kind of
   gap from everything else in this incident.
+
+## Real monitoring built, real bug fixed, sync cadence tightened — 2026-10-22/23
+
+Closes the "no monitoring exists" gap flagged directly above, same day
+it was raised.
+
+**Real second bug found while building this**: `sync-business`'s
+upsert never explicitly set `leads.synced_at` — it relied on the
+column's default value, which only applies on INSERT, never on an
+upsert's UPDATE path. This is exactly why every pre-existing lead kept
+showing a two-month-old `synced_at` throughout the whole OAuth outage,
+even on cycles where the sync was later confirmed genuinely healthy
+again — the field was quietly lying regardless of real sync health.
+Fixed by setting it explicitly in every upserted record. Verified for
+real: the single oldest-`synced_at` lead in the whole table (unchanged
+since 2026-08-14) was re-synced and its timestamp correctly jumped to
+"right now."
+
+**Built**: `check-pipeline-health` — checks whether `leads.synced_at`
+has advanced recently across active businesses, deliberately scoped to
+this one signal rather than monitoring all 7 functions individually,
+since every other function depends on the same Google refresh token
+that caused the actual incident — this single check would have caught
+it. Tracks state in a new `pipeline_health_status` table and only
+alerts on a healthy→unhealthy *transition* (not on every check while
+already-known-broken), with a matching recovery email when it comes
+back. Scheduled via a new `dispatch_platform_function()` (same
+Vault-credential pattern as `dispatch_edge_function`, minus the
+per-business loop, since this check isn't per-business).
+
+**Verified the healthy path for real**: real `200`, correct
+`minutesSinceSync`, a real row logged in `pipeline_health_status`.
+**Deliberately did not verify the alert-send path** — doing so would
+mean temporarily pushing real Vertex lead timestamps backward to fake
+a stale state; asked the user first rather than mutating production
+data unilaterally for a test. Still unverified as of this entry.
+
+**Also fixed the actual root blocker encountered while deploying
+this**: the Supabase CLI access token (a separate credential from the
+Google OAuth token — unrelated root cause, just discovered in the same
+session) had also gone invalid. Generated a fresh one with the user
+(bounded expiry recommended over "Never," full access required since
+this token does real deploys/secrets-sets, not just reads) — this one
+fails loudly and immediately at time-of-use, unlike the Google token's
+silent 7-day expiry, so it doesn't carry the same monitoring gap.
+
+**Sync cadence tightened from 30 to 5 minutes**, per explicit user
+request after establishing the real operation-count math: 144 ops/day
+at 30 minutes vs. 864 ops/day at 5 minutes, against a 2,880/day cap on
+the current Explorer tier for one business — enormous headroom at this
+scale. `auto-reply` and `send-alerts` tightened to match (2-minute
+offset after each sync) rather than left on the old 30-minute offset,
+since fresh data sitting unacted-on defeats the point of a faster sync.
+`check-pipeline-health`'s staleness threshold tightened correspondingly
+(90 → 15 minutes) and its own check frequency tightened (30 → 10
+minutes), since a monitor needs to check at least as often as the
+thing it's trying to catch. `check-spend-anomaly`, `check-verification-expiry`,
+`webhook-export`, and `send-followups` deliberately left unchanged —
+none of them are response-time-sensitive. **Verified for real**: `net._http_response`
+shows `sync-business` firing every exactly 5 minutes, `auto-reply`/
+`send-alerts` 2 minutes behind each one, and `check-pipeline-health`
+correctly reporting `minutesSinceSync` tracking right around 5 — not
+just registered, genuinely running at the new cadence.
+
+**Capacity math caveat, carried forward explicitly**: this multiplies
+per business, not just per sync cycle — revisit before a second real
+business is onboarded, same flag raised (and then forgotten about)
+back when the original 30-minute figure was chosen.
+
+## Missed-call handling — researched, not yet built
+
+User asked about SMS/WhatsApp as a missed-call channel. Checked Meta's
+actual WhatsApp Business policy first: a business cannot initiate a
+WhatsApp conversation with someone who hasn't separately opted in to
+WhatsApp contact specifically — contacting via Google LSA does not
+count as that opt-in. Outside a 24-hour reply window, only pre-approved
+Message Templates can be used. This makes WhatsApp a real compliance
+problem, not just a build task, for anyone who hasn't messaged Vertex's
+WhatsApp number first. Twilio SMS is technically simpler but needs a
+Regulatory Compliance bundle submitted to Twilio for UK numbers —
+**user already has this in place**, so Twilio is a genuinely ready
+fallback/second channel if needed.
+
+**Before reaching for either**: checked whether the already-live
+`AppendLeadConversation` mechanism (used by `send-reply`/`auto-reply`)
+could just be reused for missed `PHONE_CALL` leads too, since that
+would mean zero new infrastructure and zero new compliance risk.
+Wanted to test live but the most recent genuinely-missed call in real
+data was from 2026-08-03 — nearly 3 months old; sending "sorry we
+missed your call" about something that stale would look careless to a
+real customer and wasn't a fair test either. User chose to skip the
+live test and reason from documentation instead: `conversation_channel`
+on `LocalServicesLeadConversation` is documented as **output-only**,
+and our existing request never sends a channel/type field at all — good
+evidence (not a live-tested guarantee) that `AppendLeadConversation`
+isn't restricted by the lead's own `lead_type`. Not yet built — the
+tightened 5-minute sync cadence should surface a genuinely fresh missed
+call soon, which would make the real first test also genuinely useful
+to that customer rather than a contrived one.
