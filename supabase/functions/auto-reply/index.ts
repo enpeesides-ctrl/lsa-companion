@@ -26,10 +26,10 @@ const MAX_LEAD_AGE_HOURS = 24
 const BUSINESS_TIMEZONE = 'Europe/London' // see note above — hardcoded until a real per-business field exists
 
 const TEMPLATE =
-  "Thanks for reaching out! We've received your message and will get back to you shortly."
+  "Thanks for reaching out! We've received your message and will get back to you shortly. While you wait, feel free to fill in our quick quote form: https://vertexcare.co.uk/book.html"
 
 const AFTER_HOURS_TEMPLATE =
-  "Thanks for reaching out! We're currently closed — we've received your message and will get back to you when we reopen."
+  "Thanks for reaching out! We're currently closed — we've received your message and will get back to you when we reopen. While you wait, feel free to fill in our quick quote form: https://vertexcare.co.uk/book.html"
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

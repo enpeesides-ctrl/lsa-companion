@@ -1464,3 +1464,67 @@ isn't restricted by the lead's own `lead_type`. Not yet built — the
 tightened 5-minute sync cadence should surface a genuinely fresh missed
 call soon, which would make the real first test also genuinely useful
 to that customer rather than a contrived one.
+
+## Missed-call handling — built and deployed 2026-10-23
+
+**Built**: `supabase/functions/missed-call-handler/index.ts`. Closes
+two gaps at once: the original `send_missed_call_alerts.py` (emails
+the business) was never ported to the cloud, and nothing had ever
+texted the customer in real time. For each `PHONE_CALL` lead with
+`call_duration_millis = 0`, not yet alerted, under 24 hours old:
+sends a business-hours-aware templated text to the customer via the
+same `AppendLeadConversation` mechanism already proven for message
+auto-replies, and emails the business via the same Resend pattern
+already proven across three other functions.
+
+**Deliberate tracking design**: `missed_call_alert_sent` is set on the
+*email's* success, not the customer text's — the email is the more
+reliable, more load-bearing action (doesn't depend on Google's API at
+all), and gating on the less-reliable action would mean re-emailing the
+business every 5 minutes forever if the text ever failed. The text's
+own success/failure is logged in the function's response regardless,
+not silently dropped.
+
+Scheduled via `migrations/2026-10-23_schedule_missed_call_handler.sql`
+on the same 5-minute, 2-minute-offset cadence as `auto-reply` — a
+missed call is just as time-sensitive as an unanswered message.
+
+**Genuinely untested against a real phone-call lead as of this entry**
+— `conversation_channel` being documented output-only is good evidence
+the mechanism works for `PHONE_CALL` leads, not proof. First real test
+is still whenever a genuinely fresh missed call arrives.
+
+## Link rendering researched, added to both customer-facing templates — 2026-10-23
+
+User asked how a link in a message would render to the customer, with
+a view to adding one pointing to Vertex's real quote form
+(`vertexcare.co.uk/book.html`). Checked Google's own support docs
+directly rather than guess, and found something that reshapes the
+mental model of this whole messaging feature: a reply sent via
+`AppendLeadConversation` isn't delivered through any in-app Google chat
+UI at all — Google actually delivers it to the customer as a real
+**email or SMS text message**, routed through an anonymized alias
+(quoted directly from
+[Google's Local Services Ads help page](https://support.google.com/localservices/answer/6224859)).
+That means link rendering is governed by ordinary SMS/email client
+behavior, not some unknown Google-specific UI — both auto-linkify plain
+`https://` URLs, with one documented iOS quirk (a rich preview card
+only appears if the URL is at the very start or end of the message,
+confirmed via
+[Twilio's own guidance](https://support.twilio.com/hc/en-us/articles/360013199334-How-do-SMS-and-MMS-URL-Link-Previews-Work-on-Mobile-Devices),
+though the link stays tappable regardless).
+
+**Added to both templates**, URL placed at the message's end on
+purpose (matches the iOS preview-card placement rule): `auto-reply`'s
+`TEMPLATE`/`AFTER_HOURS_TEMPLATE` and `missed-call-handler`'s
+equivalents. Verified the exact new template text actually gets sent
+by triggering both functions against synthetic fake-lead-ID test data
+(same safe pattern used throughout this project — Google rejects the
+fake ID but still echoes the real template text back in the response),
+confirmed both read correctly with the link at the end, then deleted
+the synthetic leads. **Real side effect from that test, not a bug**:
+`missed-call-handler`'s email-to-business step fired for real during
+the test (doesn't depend on the Google send succeeding, by design),
+so a real "Missed call from +10000000001" email landed in the
+business's actual inbox — flagged to the user as test fallout, not a
+real lead.
